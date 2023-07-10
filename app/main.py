@@ -24,12 +24,18 @@ def main():
     sys.stdout.write(completed_process.stdout.decode("utf-8"))
     sys.stderr.write(completed_process.stderr.decode("utf-8"))
 
+    # Interesting that we can also do the following, instead of what is being done
+    # later on in the code.
+    # try:
+    #     completed_process.check_returncode()
+    # except subprocess.CalledProcessError as e:
+    #     # print(f"Child error {e.returncode}")
+    #     sys.exit(e.returncode)
+
     # Check if child was naughty. If it was, hang head in shame!
-    try:
-        completed_process.check_returncode()
-    except subprocess.CalledProcessError as e:
-        # print(f"Child error {e.returncode}")
-        sys.exit(e.returncode)
+    if completed_process.returncode > 0:
+        sys.exit(completed_process.returncode)
+    sys.exit(0)
 
 
 if __name__ == "__main__":
