@@ -3,15 +3,17 @@ import sys
 
 
 def main():
-    # You can use print statements as follows for debugging, they'll be visible when running tests.
-    print("Logs from your program will appear here!")
-
-    print(f"The args array: {sys.argv}")
-    command = sys.argv[3]
-    args = sys.argv[4:]
+    # print(f"Command line: {sys.argv}")
+    command: str = sys.argv[3]
+    args: list[str] = sys.argv[4:]
+    # print(f"Command: {command} Args: {args}")
 
     completed_process = subprocess.run([command, *args], capture_output=True)
-    print(completed_process.stdout.decode("utf-8"))
+    # print(f"Child stdout: {stdout_output}, child stderr: {stderr_output}")
+
+    # Redirect the captured stdout and stderr to those of the parent
+    sys.stdout.write(completed_process.stdout.decode("utf-8"))
+    sys.stderr.write(completed_process.stderr.decode("utf-8"))
 
 
 if __name__ == "__main__":
