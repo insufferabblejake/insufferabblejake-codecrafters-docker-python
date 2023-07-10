@@ -1,11 +1,16 @@
+import ctypes
+import os
 import subprocess
 import sys
-import os
 import shutil
 import tempfile
 
 
+CLONE_NEWPID = 0x20000000
+
+
 def main():
+    libc = ctypes.CDLL(None)
     # print(f"Command line: {sys.argv}")
     command: str = sys.argv[3]
     args: list[str] = sys.argv[4:]
@@ -20,8 +25,17 @@ def main():
         command = "./" + command.split('/')[-1]
 
         # Change root directory to the temporary directory
+        # fs isolation
         os.chroot(tmp_dir)
         os.chdir('/')
+
+        # process isolation
+        # Creating a new PID namespace
+        # ref. https://elixir.bootlin.com/linux/latest/source/include/uapi/linux/sched.h#L32
+        # ref. https://man7.org/linux/man-pages/man7/pid_namespaces.7.html
+        # The first created after a call to unshare(2) using CLONE_NEWPID has the PID 1
+        # See also ref. https://man7.org/linux/man-pages/man2/unshare.2.html and
+        libc.unshare(CLONE_NEWPID)
 
         # This call does a lot of heavy lifting
         # Specifically, it calls the Popen() lib call which will call a fork() and exec() thus
@@ -36,8 +50,11 @@ def main():
         # and explicitly write. If we had wanted to redirect, we'd get the stdout and stderr of
         # the child, use os.dup() in the parent to 'realtime' redirect, and restored the parents
         # original file handles for these streams after redirection is done.
-        sys.stdout.write(completed_process.stdout.decode("utf-8"))
-        sys.stderr.write(completed_process.stderr.decode("utf-8"))
+        # stdio isolation
+        if completed_process.stdout:
+            sys.stdout.write(completed_process.stdout.decode("utf-8"))
+        if completed_process.stderr:
+            sys.stderr.write(completed_process.stderr.decode("utf-8"))
 
     finally:
         # Change root back and restore original working dir
