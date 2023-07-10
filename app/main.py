@@ -13,7 +13,6 @@ def main():
     # executing the command (with it's args) in a new process space. Usual inheritance of
     # stdout, stderr and stdin from the parent process apply. Including sigmask etc.
     # the capture_output flag controls whether we pipe stdout and stderr back to parent
-    # so we can save it/process it later.
     completed_process = subprocess.run([command, *args], capture_output=True)
     # print(f"Child stdout: {stdout_output}, child stderr: {stderr_output}")
 
@@ -24,6 +23,13 @@ def main():
     # original file handles for these streams after redirection is done.
     sys.stdout.write(completed_process.stdout.decode("utf-8"))
     sys.stderr.write(completed_process.stderr.decode("utf-8"))
+
+    # Check if child was naughty. If it was, hang head in shame!
+    try:
+        completed_process.check_returncode()
+    except subprocess.CalledProcessError as e:
+        # print(f"Child error {e.returncode}")
+        sys.exit(e.returncode)
 
 
 if __name__ == "__main__":
