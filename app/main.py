@@ -1,28 +1,42 @@
 import ctypes
+import json
+import io
 import os
 import subprocess
 import sys
 import shutil
+import tarfile
 import tempfile
+from urllib import request
+from dataclasses import dataclass
 
 
-CLONE_NEWPID: int = 0x20000000
-ERROR_CODE: int = 1
-LAST_INDEX: int = -1
-TEMP_DIR: str = '/tmp'
-ROOT_DIR: str = '/'
-LIBC = ctypes.CDLL(None)
+@dataclass
+class Config:
+    CLONE_NEWPID: int = 0x20000000
+    ERROR_CODE: int = 1
+    LAST_INDEX: int = -1
+    TEMP_DIR: str = '/tmp'
+    ROOT_DIR: str = '/'
+    LIBC = ctypes.CDLL(None)
+    REGISTRY_URL = "https://registry.hub.docker.com"
+    AUTH_URL = "https://auth.docker.io/token?service=registry.docker.io&scope=repository"
+    MANIFEST_ACCEPT_HEADER = "application/vnd.docker.distribution.manifest.v2+json"
+    NO_ERROR = 0
 
 
-def copy_to_tmp_get_name(command: str) -> (str, str):
-    tmp_dir = tempfile.mkdtemp(dir=TEMP_DIR)
-    shutil.copy(command, tmp_dir)
-    return "./" + command.split('/')[LAST_INDEX], tmp_dir
+config = Config()
 
 
-def isolate_child_fs(tmp_dir: str) -> None:
-    os.chroot(tmp_dir)
-    os.chdir(ROOT_DIR)
+def copy_command_to_workspace(command: str) -> (str, str):
+    command_dir = tempfile.mkdtemp(dir=config.TEMP_DIR)
+    shutil.copy(command, command_dir)
+    return "./" + command.split('/')[config.LAST_INDEX], command_dir
+
+
+def isolate_child_fs(workspace: str) -> None:
+    os.chroot(workspace)
+    os.chdir(config.ROOT_DIR)
 
 
 def create_pid_namespace() -> None:
@@ -30,7 +44,7 @@ def create_pid_namespace() -> None:
     # ref. https://man7.org/linux/man-pages/man7/pid_namespaces.7.html
     # The first process created after a call to unshare(2) using CLONE_NEWPID has the PID 1
     # See also ref. https://man7.org/linux/man-pages/man2/unshare.2.html and
-    LIBC.unshare(CLONE_NEWPID)
+    config.LIBC.unshare(config.CLONE_NEWPID)
 
 
 def exec_command(command: str, args: list[str]):
@@ -54,21 +68,59 @@ def get_stdio(subprocess_result) -> None:
         sys.stderr.write(subprocess_result.stderr.decode("utf-8"))
 
 
+def get_auth_token(image: str) -> str:
+    url = f"{config.AUTH_URL}:{image}:pull"
+    response = request.urlopen(url)
+    return json.loads(response.read())["token"]
+
+
+def get_headers(token: str) -> dict:
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": config.MANIFEST_ACCEPT_HEADER,
+    }
+
+
+def fetch_manifest(token, image):
+    r = request.Request(f"{config.REGISTRY_URL}/v2/{image}/manifests/latest",
+                        headers=get_headers(token))
+    response = request.urlopen(r)
+    return json.loads(response.read())
+
+
+def pull_layer(token: str, image: str, digest):
+    r = request.Request(f"{config.REGISTRY_URL}/v2/{image}/blobs/{digest}",
+                        headers=get_headers(token))
+    response = request.urlopen(r)
+    return response.read()
+
+
+def download_image_layers(token: str, image: str, manifest, workspace: str) -> None:
+    for layer in manifest["layers"]:
+        layer_tar = pull_layer(token, image, layer["digest"])
+        with tarfile.open(fileobj=io.BytesIO(layer_tar)) as tar:
+            tar.extractall(workspace)
+
+
 def main():
-    args: list[str] = sys.argv[4:]
+    command_args: list[str] = sys.argv[4:]
+    image: str = "library/" + sys.argv[2]
+    token: str = get_auth_token(image)
+    manifest = fetch_manifest(token, image)
 
     subprocess_result = None
     try:
-        command, tmp_dir = copy_to_tmp_get_name(sys.argv[3])
-        isolate_child_fs(tmp_dir)
+        command, workspace = copy_command_to_workspace(sys.argv[3])
+        download_image_layers(token, image, manifest, workspace)
+        isolate_child_fs(workspace)
         create_pid_namespace()
-        subprocess_result = exec_command(command, args)
+        subprocess_result = exec_command(command, command_args)
         get_stdio(subprocess_result)
 
     # Handle case where file ops in shutil fail
     except OSError as e:
         print(f"OS Error: {e}")
-        sys.exit(ERROR_CODE)
+        sys.exit(config.ERROR_CODE)
 
     # Handle case where running the subprocess fails
     # Note that this exception is also available as
@@ -79,18 +131,18 @@ def main():
     # Handle whatever else may occur
     except Exception as e:
         print(f"Unexpected error: {e}")
-        sys.exit(ERROR_CODE)
+        sys.exit(config.ERROR_CODE)
 
     finally:
         # Change root back and restore original working dir
-        os.chroot('/')
+        os.chroot(config.ROOT_DIR)
 
         # Check if child was naughty. If it was, hang head in shame!
-        # We have this as a separate thing, because the codecrafters test child returns an exit code
+        # We have this as a separate thing, because the code crafters test child returns an exit code
         # without actually failing or raising a CalledProcessError()
         if subprocess_result is not None and subprocess_result.returncode > 0:
             sys.exit(subprocess_result.returncode)
-        sys.exit(0)
+        sys.exit(config.NO_ERROR)
 
 
 if __name__ == "__main__":
