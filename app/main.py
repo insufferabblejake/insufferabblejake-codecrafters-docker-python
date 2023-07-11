@@ -30,8 +30,10 @@ config = Config()
 
 def copy_command_to_workspace(command: str) -> (str, str):
     command_dir = tempfile.mkdtemp(dir=config.TEMP_DIR)
-    shutil.copy(command, command_dir)
-    return "./" + command.split('/')[config.LAST_INDEX], command_dir
+    # TODO seem to not need this for stage 6
+    # shutil.copy(command, command_dir)
+    # retval = "./" + command.split('/')[config.LAST_INDEX], command_dir
+    return command, command_dir
 
 
 def isolate_child_fs(workspace: str) -> None:
